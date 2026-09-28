@@ -26,8 +26,9 @@ Captured output from my run is in `EVIDENCE.txt`.
 | 3 | `build_plan` vertical misclassification cascades silently | Quality issue | `03` |
 | 4 | `build_doctor` stops checking a UI it does not recognise | Quality issue | `04` |
 | 5 | Deploys use a mutable `:latest` image tag | Root cause for a known, already-mitigated issue | `05` |
+| 6 | Model survives a third tenant added post-hoc | Verification, not a finding | `06` |
 | R1 | ~~Workflow definition schema is undocumented~~ | **Retracted — my error** | — |
-| R2 | ~~Multi-tenancy is a silent inference~~ | **Retracted — wrong as framed** | — |
+| R2 | Multi-tenancy flag — over-claimed, then over-retracted | **Corrected; claim stands, mechanism was wrong** | `06` |
 | R3 | ~~`workflows` cannot be imported by the deploy key~~ | **Documented, and I was warned** | — |
 
 ---
@@ -247,22 +248,79 @@ to know to ask for. A single line — *"§6 is a summary; the authoritative work
 schema is `doc='workflows'`"* — would have saved me a cycle. But that is a
 signposting suggestion, not a bug.
 
-### R2. Multi-tenancy is not an inferred flag on the MCP path
+### R2. Multi-tenancy — I was wrong twice, in opposite directions
 
-I reported that tenancy "defaults to inference" because `build_create_project` has
-no tenancy parameter and `build_plan`'s `is_multi_tenant` says *"Inferred from the
-description if omitted"*.
+**First I over-claimed, then I over-retracted.** Both corrections matter, because
+you explicitly asked what I would do about this.
 
-That reasoning was wrong. On the MCP path tenancy is **declarative**: you list
-tenants in `config.py`, and the platform auto-derives `SUPERO_IS_MULTI_TENANT` from
-that list at go-live (SKILLS §7.5a). `build_plan`'s flag only shapes the advice it
-prints, which is exactly what its description claims. The job posting's
-"generation-time flag that defaults to off" is presumably App Studio, which I never
-used.
+My original claim was that tenancy "defaults to inference" because
+`build_create_project` has no tenancy parameter and `build_plan`'s
+`is_multi_tenant` says *"Inferred from the description if omitted"*. That was the
+wrong mechanism, and I retracted it.
 
-The reproduction was real; my conclusion about what it meant was not. The residue
-is finding 3 — the planner's *advice* can be confidently wrong — which is a much
-smaller claim.
+The retraction went too far. **The flag you describe is real.** SKILLS §7.5a:
+
+> **Turn the flag ON via ENV VARS** — **NOT** `config.py`. There is no `AppConfig`
+> field for this... Without `SUPERO_IS_MULTI_TENANT=true`, `cfg.isMultiTenant` is
+> `false` and your tenant switcher / scoping UI never shows, **even though the
+> tenants exist**.
+
+Opt-in, defaults off, someone has to remember — exactly as you put it. And the
+failure mode is worse than "it is off": the tenants are created, the data is
+correctly partitioned, the server enforces isolation, and **the UI silently
+pretends none of it exists**. Nothing errors. You get a single-tenant-looking app
+sitting on correctly multi-tenant data, and the only symptom is a missing switcher
+you were not necessarily expecting to see.
+
+There is a real mitigation already: on a cloud go-live the platform auto-derives
+the flag from `config.py` `tenants[]`. So the trap is mostly local `supero run` —
+which is exactly where a builder forms their mental model of what they built.
+
+**What I would do about it.** Not "default it on". The honest fix is to stop having
+a flag that can disagree with the data:
+
+1. **Derive it everywhere, not just at go-live.** The `tenants[]` list in
+   `config.py` already says whether this app is multi-tenant. Two named tenants and
+   `isMultiTenant: false` is not a configuration, it is a contradiction. The CLI
+   writes `ui/config.js`; it can read `config.py` the same way go-live already does.
+2. **If a flag must remain, make disagreement loud.** `build_doctor` already knows
+   both facts — it reported `named_tenants: ["contoso", "northwind"]` for my bundle.
+   Tenants declared with the flag off is a one-line warning it is already holding
+   the inputs for.
+3. **The general rule I applied inside my own app:** a flag is only honest when
+   turning it on later is cheap. `require_dual_approval` qualifies — flip it and the
+   next decision changes, nothing stored becomes wrong. Tenancy does not: retrofitting
+   it rewrites every query, every policy and the login path. So in Reclaim tenancy is
+   structural and always on, and the approval gate is the flag. That is the same test
+   I would apply to this one — and by it, `SUPERO_IS_MULTI_TENANT` fails, which is
+   why deriving it beats defaulting it.
+
+**And I tested the claim rather than just agreeing with it.** After the app was
+built, deployed and verified, I added a third organisation — Fabrikam Industrial —
+to see whether the model survived more than the two it was written with.
+
+```
+northwind=2 clusters  contoso=2 clusters  fabrikam=2 clusters
+nw-admin sees 2 clusters, 0 foreign        ct-admin sees 2, 0 foreign
+fb-admin sees 2 clusters, 0 foreign
+windows: northwind=30m  contoso=20m  fabrikam=10m
+fb-lab-2 observed 13m ago -> Fabrikam stale=True, Northwind stale=False
+```
+
+That last line is the one I care about. The same reading is stale for one
+organisation and fresh for another, because the staleness window is tenant policy
+rather than a constant. Isolation held three ways.
+
+Adding the tenant cost: a `config.py` entry, two users, seed rows, one platform
+tenant record. **Zero schema changes, zero policy changes, zero UI changes.**
+
+It did find one bug — in my code, not yours. The tenant switcher listed the two
+seeded organisations as literal `<option>` elements, so Fabrikam existed on the
+platform and in the data and was invisible in the UI. That is precisely the failure
+a second tenant is meant to catch, and it took a third to catch it. The switcher now
+loads its list at runtime.
+
+*Repro: `repro/06_third_tenant.py`*
 
 ### R3. `workflows` import being refused is documented, and `build_doctor` warned me
 

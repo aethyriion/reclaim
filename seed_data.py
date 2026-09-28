@@ -71,6 +71,34 @@ FLEETS = {
              "observation_note": "Two nodes cordoned; observation still current."},
         ],
     },
+    "fabrikam": {
+        # Dual approval ON, and the tightest staleness window of the three (10
+        # minutes) — a deliberately stricter organisation, to prove the policy is
+        # genuinely per-tenant rather than two hard-coded variants.
+        "policy": {
+            "name": "fabrikam-fleet-policy", "display_name": "Fabrikam fleet policy",
+            "description": "Safety settings for the Fabrikam Industrial fleet.",
+            "require_dual_approval": True,
+            "stale_observation_minutes": 10,
+            "auto_release_grace_minutes": 5,
+            "escalation_channel": "#sre-escalation",
+        },
+        "clusters": [
+            {"name": "fb-plant-1", "display_name": "fb-plant-1",
+             "description": "Plant-floor cluster, europe-west1, latency sensitive.",
+             "provider": "gcp", "region": "europe-west1", "capacity": 5,
+             "cluster_state": "healthy", "last_observed_at": ago(minutes=3),
+             "observation_note": "Reconciler polled successfully."},
+            # 12 minutes old: FRESH under Northwind's 30-minute window, STALE under
+            # Fabrikam's 10-minute one. Same reading, different verdict, because the
+            # window is a per-tenant policy rather than a constant.
+            {"name": "fb-lab-2", "display_name": "fb-lab-2",
+             "description": "Lab cluster, us-west1, used for hardware-in-the-loop runs.",
+             "provider": "aws", "region": "us-west-2", "capacity": 3,
+             "cluster_state": "degraded", "last_observed_at": ago(minutes=12),
+             "observation_note": "Last poll succeeded but is outside this org's window."},
+        ],
+    },
 }
 
 # (environment, lease, finding) rows per tenant, keyed by the cluster they sit on.
@@ -233,3 +261,53 @@ ENVIRONMENTS = {
          "lease": None, "finding": None},
     ],
 }
+
+ENVIRONMENTS["fabrikam"] = [
+    # Scenario 4: the SAME disagreement as Northwind's nw-prod-a case, on an
+    # observation only 12 minutes old. Northwind would allow a force reclaim on
+    # this; Fabrikam withholds it, because its window is 10 minutes. The guard is
+    # driven by the tenant's policy, not by a constant.
+    {"cluster": "fb-lab-2", "env": {
+        "name": "fb-lab-2-preview-03", "display_name": "lab-preview-03",
+        "description": "Preview environment disputed on a reading this org considers stale.",
+        "env_kind": "preview", "env_state": "disputed", "observed_allocation": "allocated",
+        "namespace_path": "team-forge/lab-preview-03", "current_holder": "fb-eng@fabrikam.example",
+        "current_team": "forge", "monthly_cost_usd": 295.0},
+     "lease": {
+        "name": "lease-fb-03", "display_name": "lab-preview-03 · forge",
+        "description": "Expired lease whose release failed on a stuck device plugin.",
+        "team": "forge", "requested_by": "fb-eng@fabrikam.example",
+        "owner_username": "fb-eng@fabrikam.example", "purpose": "Hardware-in-the-loop run",
+        "claimed_at": ago(days=4), "expires_at": ago(hours=7),
+        "lease_state": "release_failed", "release_attempts": 2,
+        "last_release_error": "device plugin did not release /dev/ttyUSB0; pod stuck Terminating"},
+     "finding": {
+        "name": "drift-fb-03", "display_name": "lab-preview-03 still allocated",
+        "description": "Release failed and the cluster still reports the namespace allocated.",
+        "claimed_allocation": "free", "observed_allocation": "allocated",
+        "detected_at": ago(hours=6), "observation_age_minutes": 12,
+        "severity": "medium", "finding_state": "open", "resolution": "unresolved",
+        "wasted_cost_usd": 86.0}},
+
+    {"cluster": "fb-plant-1", "env": {
+        "name": "fb-plant-1-persistent-01", "display_name": "plant-persistent-01",
+        "description": "Long-lived plant-floor environment for the telemetry service.",
+        "env_kind": "persistent", "env_state": "claimed", "observed_allocation": "allocated",
+        "namespace_path": "team-forge/plant-01", "current_holder": "fb-admin@fabrikam.example",
+        "current_team": "forge", "monthly_cost_usd": 740.0},
+     "lease": {
+        "name": "lease-fb-plant-01", "display_name": "plant-persistent-01 · forge",
+        "description": "Active long-running lease.",
+        "team": "forge", "requested_by": "fb-admin@fabrikam.example",
+        "owner_username": "fb-admin@fabrikam.example", "purpose": "Telemetry ingestion",
+        "claimed_at": ago(days=14), "expires_at": ahead(days=45),
+        "lease_state": "active", "release_attempts": 0},
+     "finding": None},
+
+    {"cluster": "fb-plant-1", "env": {
+        "name": "fb-plant-1-preview-08", "display_name": "plant-preview-08",
+        "description": "Free preview slot on the plant-floor cluster.",
+        "env_kind": "preview", "env_state": "available", "observed_allocation": "free",
+        "namespace_path": "pool/plant-preview-08", "monthly_cost_usd": 0.0},
+     "lease": None, "finding": None},
+]

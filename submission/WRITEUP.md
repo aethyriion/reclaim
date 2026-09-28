@@ -67,29 +67,53 @@ cluster, six-hour-old observation), one parked awaiting a second approver.
 
 ## Multi-tenancy
 
-On from the first run, not retrofitted. Two organisations — Northwind Systems and
-Contoso Cloud — with different policies, so the second tenant is exercised rather
-than asserted.
+On from the first run, not retrofitted. And because "survives a second tenant" can
+be passed by hard-coding two, I added a **third** — Fabrikam Industrial — after the
+app was built, deployed and verified.
 
-I attacked my own boundary, as invited. Seven probes, results in
+```
+northwind=2 clusters   contoso=2 clusters   fabrikam=2 clusters
+nw-admin sees 2, 0 foreign · ct-admin sees 2, 0 foreign · fb-admin sees 2, 0 foreign
+windows: northwind=30m   contoso=20m   fabrikam=10m
+fb-lab-2 observed 13m ago  ->  Fabrikam stale=True, Northwind stale=False
+```
+
+That last line is the one I care about: the **same reading** is stale for one
+organisation and fresh for another, because the staleness window is tenant policy
+rather than a constant. Isolation held three ways.
+
+Adding the tenant cost a `config.py` entry, two users, seed rows and one platform
+tenant record — **zero schema changes, zero policy changes, zero UI changes.**
+
+It found exactly one bug, and it was mine: the tenant switcher listed the two seeded
+organisations as literal `<option>` elements, so Fabrikam existed on the platform and
+in the data and was invisible in the UI. That is precisely the failure a second tenant
+is supposed to catch, and it took a third to catch it. The switcher now loads its list
+at runtime.
+
+I also attacked the boundary directly, as invited. Seven probes, in
 [`TENANT-PROBE.txt`](./TENANT-PROBE.txt): **6 held, 0 breached.** Cross-tenant reads
 and writes are refused (`Access denied: this reclaim:cluster belongs to another
 tenant`), a forged `X-Tenant` header changes nothing, an engineer cannot resolve
-drift, and lease reads are owner-scoped server-side.
+drift, and lease reads are owner-scoped server-side. The seventh is not a breach but
+is not clean either — it is finding 1.
 
-The seventh is not a breach but is not clean either, and it turned out to be a
-platform bug — finding 1 below.
+**On the flag itself, since you asked.** You are right that it is opt-in and defaults
+off, and the failure is worse than "it is off": tenants get created, data is
+partitioned correctly, the server enforces isolation, and the UI silently behaves as
+though none of that happened. Nothing errors.
 
-## `require_dual_approval` is a flag; tenancy is not
+I would not default it on. I would stop having a flag that can disagree with the
+data. `config.py` `tenants[]` already states the answer, and go-live already derives
+the flag from it — so derive it everywhere, not just at go-live. If a flag must
+remain, make disagreement loud: `build_doctor` already reported
+`named_tenants: ["contoso", "northwind"]` for my bundle, so "tenants declared, flag
+off" is a warning it is already holding both inputs for.
 
-`fleet_policy.require_dual_approval` is per-organisation and defaults **off** —
-deliberately the same shape you criticise in your own platform.
-
-The distinction that makes it defensible: **a flag is only honest when turning it on
-later is cheap.** Flipping dual-approval changes the next decision and nothing else;
-nothing already stored becomes wrong. Retrofitting tenancy rewrites every query,
-every policy and the login path. One qualifies as a setting. The other has to be
-structural, so it is.
+The general rule is the one I applied inside Reclaim: **a flag is only honest when
+turning it on later is cheap.** `require_dual_approval` passes that test. Tenancy
+fails it. Which is why, in my app, tenancy is structural and the approval gate is the
+flag — and why deriving `SUPERO_IS_MULTI_TENANT` beats defaulting it.
 
 ## One decision I reversed
 
@@ -236,9 +260,12 @@ your posting says it should be.
   built from the §6 summary without fetching the companion doc. The only thing I would
   still raise is signposting: §6 reads as complete, and a one-line pointer to the
   authoritative schema would have saved a cycle.
-- **Multi-tenancy is not an inferred flag on MCP.** It is declarative in `config.py`
-  `tenants[]`, auto-derived at go-live. `build_plan`'s `is_multi_tenant` only shapes
-  advice, exactly as documented. My reproduction was real; my conclusion was wrong.
+- **Multi-tenancy: I was wrong twice, in opposite directions.** I first claimed the
+  flag was a `build_plan` inference — wrong mechanism. Then I retracted too far. The
+  flag is real and is `SUPERO_IS_MULTI_TENANT`, and SKILLS §7.5a is explicit that
+  without it *"your tenant switcher / scoping UI never shows, **even though the
+  tenants exist**"*. My answer to what I would do about it is below, under
+  "Multi-tenancy".
 - **`workflows` import being refused is documented, and `build_doctor` warned me in
   plain text.** Not a bug. The narrower point that stands: SKILLS tells builders a
   product-grade app wires "2–3 real workflows + `EVENT_BINDINGS`", while the standard

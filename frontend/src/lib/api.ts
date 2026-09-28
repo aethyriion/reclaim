@@ -36,6 +36,35 @@ export async function loadFleet(): Promise<Fleet> {
   return { clusters, environments, leases, findings, policy: policies[0] ?? null };
 }
 
+/** The organisations a super-admin may switch between.
+ *
+ * Read at runtime, never hard-coded. An earlier version listed the two seeded
+ * organisations as literal <option>s, which meant a third tenant existed on the
+ * platform and in the data but was invisible in the UI - the exact failure a
+ * second (or third) tenant is supposed to catch.
+ *
+ * `default-tenant` is excluded: it holds the super-admin and no fleet data. */
+export async function loadTenants(): Promise<Array<{ name: string; label: string }>> {
+  const declared = (window.__SUPERO_CONFIG as unknown as { tenants?: unknown })?.tenants;
+  if (Array.isArray(declared) && declared.length) {
+    return declared
+      .map((t) => (typeof t === 'string'
+        ? { name: t, label: t }
+        : { name: String((t as { name?: string }).name ?? ''),
+            label: String((t as { display_name?: string; name?: string }).display_name
+                       ?? (t as { name?: string }).name ?? '') }))
+      .filter((t) => t.name && t.name !== 'default-tenant');
+  }
+  try {
+    const rows = await list<SuperoRecord>('tenant');
+    return rows
+      .map((t) => ({ name: String(t.name ?? ''), label: String(t.display_name ?? t.name ?? '') }))
+      .filter((t) => t.name && t.name !== 'default-tenant');
+  } catch {
+    return [];
+  }
+}
+
 export function byUuid<T extends SuperoRecord>(items: T[], uuid: string): T | null {
   return items.find((i) => i.uuid === uuid) ?? null;
 }

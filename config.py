@@ -24,6 +24,9 @@ class AppConfig:
         {"name": "default-tenant", "display_name": "Reclaim HQ"},
         {"name": "northwind", "display_name": "Northwind Systems"},
         {"name": "contoso", "display_name": "Contoso Cloud"},
+        # Third organisation, added AFTER the app was built and deployed, to test
+        # the claim that the model survives more than the two it was written with.
+        {"name": "fabrikam", "display_name": "Fabrikam Industrial"},
     ])
 
     users: list = field(default_factory=lambda: [
@@ -45,6 +48,12 @@ class AppConfig:
          "full_name": "Mika Lindqvist", "tenant": "contoso"},
         {"email": "ct-eng@contoso.example", "password": "Password123!", "role": "tenant_user",
          "full_name": "Sam Whitfield", "tenant": "contoso"},
+
+        # Fabrikam Industrial — dual approval ON, tightest staleness window.
+        {"email": "fb-admin@fabrikam.example", "password": "Password123!", "role": "tenant_admin",
+         "full_name": "Ana Duarte", "tenant": "fabrikam"},
+        {"email": "fb-eng@fabrikam.example", "password": "Password123!", "role": "tenant_user",
+         "full_name": "Tomas Berg", "tenant": "fabrikam"},
     ])
 
     # No integrations: every workflow step here is CRUD, so nothing depends on a

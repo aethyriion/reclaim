@@ -1,5 +1,6 @@
 <script lang="ts">
   import { isStaff, me, canSwitchTenant } from '../lib/rbac';
+  import { loadTenants } from '../lib/api';
   import { C } from '../lib/format';
   import Btn from '../ui/Btn.svelte';
 
@@ -18,6 +19,13 @@
   ]);
 
   const here = $derived((route.split('/')[1] ?? ''));
+
+  // Populated at runtime so a tenant added after this app shipped still appears.
+  let tenants = $state<Array<{ name: string; label: string }>>([]);
+  $effect(() => {
+    if (!canSwitchTenant()) return;
+    void loadTenants().then((t) => { tenants = t; });
+  });
   const active = (hash: string) => (hash === '#/' && here === '') || (hash !== '#/' && `#/${here}` === hash);
 </script>
 
@@ -41,11 +49,13 @@
     </div>
 
     <div class="flex flex-wrap items-center gap-3">
-      {#if canSwitchTenant()}
+      {#if canSwitchTenant() && tenants.length}
         <select class="rounded-[7px] border border-rc-line bg-rc-panel px-2.5 py-1.5 text-[12.5px] text-rc-text"
                 value={tenant} onchange={(e) => onTenant((e.currentTarget as HTMLSelectElement).value)}>
-          <option value="northwind">Northwind Systems</option>
-          <option value="contoso">Contoso Cloud</option>
+          <option value="">All organisations</option>
+          {#each tenants as t (t.name)}
+            <option value={t.name}>{t.label}</option>
+          {/each}
         </select>
       {/if}
       <div class="text-right">

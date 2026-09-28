@@ -4566,6 +4566,21 @@ var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "acce
     ]);
     return { clusters, environments, leases, findings, policy: policies[0] ?? null };
   }
+  async function loadTenants() {
+    const declared = window.__SUPERO_CONFIG?.tenants;
+    if (Array.isArray(declared) && declared.length) {
+      return declared.map((t) => typeof t === "string" ? { name: t, label: t } : {
+        name: String(t.name ?? ""),
+        label: String(t.display_name ?? t.name ?? "")
+      }).filter((t) => t.name && t.name !== "default-tenant");
+    }
+    try {
+      const rows2 = await list("tenant");
+      return rows2.map((t) => ({ name: String(t.name ?? ""), label: String(t.display_name ?? t.name ?? "") })).filter((t) => t.name && t.name !== "default-tenant");
+    } catch {
+      return [];
+    }
+  }
   function byUuid(items, uuid) {
     return items.find((i) => i.uuid === uuid) ?? null;
   }
@@ -4847,8 +4862,9 @@ var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "acce
   }
   delegate(["click"]);
   var root$e = /* @__PURE__ */ from_html(`<a class="whitespace-nowrap rounded-[7px] px-3 py-[7px] text-[13px] font-semibold no-underline"> </a>`);
-  var root_1$a = /* @__PURE__ */ from_html(`<select class="rounded-[7px] border border-rc-line bg-rc-panel px-2.5 py-1.5 text-[12.5px] text-rc-text"><option>Northwind Systems</option><option>Contoso Cloud</option></select>`);
-  var root_2$7 = /* @__PURE__ */ from_html(`<div class="min-h-screen bg-rc-bg text-rc-text"><header class="flex flex-wrap items-center justify-between gap-3.5 border-b border-rc-line bg-rc-panel2 px-5 py-3"><div class="flex flex-wrap items-center gap-4"><div class="flex items-center gap-2.5"><div class="flex h-6 w-6 items-center justify-center rounded-md text-[13px] font-extrabold" style="border:1px solid #38BDF877;background:#38BDF81a;color:#38BDF8">&#9851;</div> <span class="text-[15.5px] font-extrabold">Reclaim</span></div> <nav class="flex flex-wrap gap-1.5"></nav></div> <div class="flex flex-wrap items-center gap-3"><!> <div class="text-right"><div class="text-[12.5px] font-semibold"> </div> <div class="text-[11px] text-rc-dim"> </div></div> <!></div></header> <main class="mx-auto max-w-[1180px] px-5 pb-[60px] pt-6"><!></main></div>`);
+  var root_1$a = /* @__PURE__ */ from_html(`<option> </option>`);
+  var root_2$7 = /* @__PURE__ */ from_html(`<select class="rounded-[7px] border border-rc-line bg-rc-panel px-2.5 py-1.5 text-[12.5px] text-rc-text"><option>All organisations</option><!></select>`);
+  var root_3$7 = /* @__PURE__ */ from_html(`<div class="min-h-screen bg-rc-bg text-rc-text"><header class="flex flex-wrap items-center justify-between gap-3.5 border-b border-rc-line bg-rc-panel2 px-5 py-3"><div class="flex flex-wrap items-center gap-4"><div class="flex items-center gap-2.5"><div class="flex h-6 w-6 items-center justify-center rounded-md text-[13px] font-extrabold" style="border:1px solid #38BDF877;background:#38BDF81a;color:#38BDF8">&#9851;</div> <span class="text-[15.5px] font-extrabold">Reclaim</span></div> <nav class="flex flex-wrap gap-1.5"></nav></div> <div class="flex flex-wrap items-center gap-3"><!> <div class="text-right"><div class="text-[12.5px] font-semibold"> </div> <div class="text-[11px] text-rc-dim"> </div></div> <!></div></header> <main class="mx-auto max-w-[1180px] px-5 pb-[60px] pt-6"><!></main></div>`);
   function Shell($$anchor, $$props) {
     push($$props, true);
     const staff = /* @__PURE__ */ user_derived(isStaff);
@@ -4862,8 +4878,15 @@ var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "acce
       ] : []
     ]);
     const here = /* @__PURE__ */ user_derived(() => $$props.route.split("/")[1] ?? "");
+    let tenants = /* @__PURE__ */ state(proxy([]));
+    user_effect(() => {
+      if (!canSwitchTenant()) return;
+      void loadTenants().then((t) => {
+        set(tenants, t, true);
+      });
+    });
     const active = (hash) => hash === "#/" && get(here) === "" || hash !== "#/" && `#/${get(here)}` === hash;
-    var div = root_2$7();
+    var div = root_3$7();
     var header = child(div);
     var div_1 = child(header);
     var nav = sibling(child(div_1), 2);
@@ -4890,11 +4913,22 @@ var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "acce
     var node = child(div_2);
     {
       var consequent = ($$anchor2) => {
-        var select = root_1$a();
+        var select = root_2$7();
         var option = child(select);
-        option.value = option.__value = "northwind";
-        var option_1 = sibling(option);
-        option_1.value = option_1.__value = "contoso";
+        option.value = option.__value = "";
+        var node_1 = sibling(option);
+        each(node_1, 17, () => get(tenants), (t) => t.name, ($$anchor3, t) => {
+          var option_1 = root_1$a();
+          var text_1 = only_child(option_1, true);
+          var option_1_value = {};
+          template_effect(() => {
+            set_text(text_1, get(t).label);
+            if (option_1_value !== (option_1_value = get(t).name)) {
+              option_1.value = (option_1.__value = option_1_value) ?? "";
+            }
+          });
+          append($$anchor3, option_1);
+        });
         var select_value;
         init_select(select);
         template_effect(() => {
@@ -4905,18 +4939,18 @@ var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "acce
         delegated("change", select, (e) => $$props.onTenant(e.currentTarget.value));
         append($$anchor2, select);
       };
-      var d = /* @__PURE__ */ user_derived(() => canSwitchTenant());
+      var d = /* @__PURE__ */ user_derived(() => canSwitchTenant() && get(tenants).length);
       if_block(node, ($$render) => {
         if (get(d)) $$render(consequent);
       });
     }
     var div_3 = sibling(node, 2);
     var div_4 = child(div_3);
-    var text_1 = only_child(div_4, true);
+    var text_2 = only_child(div_4, true);
     var div_5 = sibling(div_4, 2);
-    var text_2 = only_child(div_5, true);
-    var node_1 = sibling(div_3, 2);
-    Btn(node_1, {
+    var text_3 = only_child(div_5, true);
+    var node_2 = sibling(div_3, 2);
+    Btn(node_2, {
       small: true,
       ghost: true,
       get tone() {
@@ -4926,18 +4960,18 @@ var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "acce
         return $$props.onLogout;
       },
       children: ($$anchor2, $$slotProps) => {
-        var text_3 = text("Sign out");
-        append($$anchor2, text_3);
+        var text_4 = text("Sign out");
+        append($$anchor2, text_4);
       },
       $$slots: { default: true }
     });
     var main = sibling(header, 2);
-    var node_2 = child(main);
-    snippet(node_2, () => $$props.children ?? noop);
+    var node_3 = child(main);
+    snippet(node_3, () => $$props.children ?? noop);
     template_effect(
       ($0) => {
-        set_text(text_1, $0);
-        set_text(text_2, get(staff) ? "platform admin" : "platform engineer");
+        set_text(text_2, $0);
+        set_text(text_3, get(staff) ? "platform admin" : "platform engineer");
       },
       [() => me()]
     );

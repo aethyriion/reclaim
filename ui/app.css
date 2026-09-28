@@ -66,6 +66,10 @@
   --font-rc-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+.invisible {
+  visibility: hidden;
+}
+
 .visible {
   visibility: visible;
 }
