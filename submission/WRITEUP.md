@@ -85,11 +85,25 @@ rather than a constant. Isolation held three ways.
 Adding the tenant cost a `config.py` entry, two users, seed rows and one platform
 tenant record — **zero schema changes, zero policy changes, zero UI changes.**
 
-It found exactly one bug, and it was mine: the tenant switcher listed the two seeded
-organisations as literal `<option>` elements, so Fabrikam existed on the platform and
-in the data and was invisible in the UI. That is precisely the failure a second tenant
-is supposed to catch, and it took a third to catch it. The switcher now loads its list
-at runtime.
+Then a better test happened by accident. A fourth tenant, `test-other`, was created
+directly in the Supero dashboard — out of band, after the app was built and deployed,
+through a path the app knows nothing about. It appeared in the organisation picker
+immediately, with no code change and no redeploy:
+
+```
+Viewing: all organisations | Northwind Systems | Contoso Cloud | Fabrikam Industrial | Test-other
+```
+
+That is the honest version of "survives another tenant": not one I added through the
+supported config path, but one that appeared underneath the app while it was running.
+
+It found two bugs, both mine. The tenant switcher listed the two seeded organisations
+as literal `<option>` elements, so Fabrikam existed on the platform and in the data and
+was invisible in the UI — precisely the failure a second tenant is supposed to catch,
+and it took a third to catch it. Worse, the switcher did not actually filter anything:
+it called `setTenantOverride()`, which is inert (finding 6), so the dropdown changed
+its own label and nothing else. Both are fixed; the control is now honest about being
+a view rather than a boundary.
 
 I also attacked the boundary directly, as invited. Seven probes, in
 [`TENANT-PROBE.txt`](./TENANT-PROBE.txt): **6 held, 0 breached.** Cross-tenant reads
@@ -232,6 +246,13 @@ passes a real regression for the same reason it passes this. One line fixes the
 feedback without changing a check: *"ui/app.js looks like a loader; UI checks
 skipped."*
 
+A second-order effect I hit myself: once the app lives in `bundle.js`, `app.js` is a
+stable loader whose hash never changes, so **`expected_app_js_sha1` stops detecting
+stale rolls** — it reported an identical sha1 across two entirely different versions
+of the app. The check that saved me earlier is defeated by this shape. Both problems
+have the same fix: identify the deployed artifact by the bundle `checksum`
+`build_publish` already returns, not by hashing one conventionally-named file.
+
 *Repro: `repro/04_doctor_skips_bundled_ui.py`*
 
 ### 5. Deploys use a mutable `:latest` tag — a cause for something you already catch
@@ -250,6 +271,26 @@ running *this*. That makes "which version is in that pod" the five-second questi
 your posting says it should be.
 
 *Repro: `repro/05_deploy_status_artifact.py`*
+
+### 6. `client.setTenantOverride()` does nothing — confirmed
+
+SKILLS §7.5a documents the super-admin tenant switcher as `setTenantOverride(name)`,
+"it sets the `X-Tenant` header on every later CRUD call." It sets the header; the API
+ignores it. Every override value returns an identical result set:
+
+```
+no override / northwind / contoso / fabrikam / default-tenant
+  -> 6 clusters, tenants=[contoso, fabrikam, northwind]   (identical, all five)
+```
+
+Not an isolation failure — a super-admin in `default-tenant` is not tenant-scoped and
+should see everything; tenant-scoped users are correctly confined. The problem is that
+the documented way to build a switcher is inert, so an app that follows SKILLS ships a
+control implying a scope it does not enforce. **I shipped exactly that for two versions
+before testing it.** Reclaim now filters client-side and labels it `Viewing: <org>`.
+
+Honour the header for principals entitled to cross-tenant reads, or reject it with a
+400. Accepting and ignoring it is the one option that produces a convincing lie.
 
 ### Retracted — my errors
 

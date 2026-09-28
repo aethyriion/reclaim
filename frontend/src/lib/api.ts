@@ -33,7 +33,11 @@ export async function loadFleet(): Promise<Fleet> {
     list<DriftFinding>('drift_finding'),
     list<FleetPolicy>('fleet_policy'),
   ]);
-  return { clusters, environments, leases, findings, policy: policies[0] ?? null };
+  return {
+    clusters, environments, leases, findings,
+    policy: policies[0] ?? null,
+    policies,
+  };
 }
 
 /** The organisations a super-admin may switch between.
@@ -63,6 +67,39 @@ export async function loadTenants(): Promise<Array<{ name: string; label: string
   } catch {
     return [];
   }
+}
+
+/** The tenant a record belongs to, read from its fq_name:
+ * [domain, project, tenant, name]. */
+export function tenantOf(r: SuperoRecord): string {
+  const fq = r.fq_name;
+  return Array.isArray(fq) && fq.length > 2 ? String(fq[2]) : '';
+}
+
+/* Narrow a loaded fleet to one organisation, CLIENT-SIDE.
+ *
+ * This is a view filter, not a security boundary, and the distinction matters.
+ * A tenant-scoped user (tenant_admin / tenant_user inside a named tenant) never
+ * needs this: the server already returns only their organisation's rows, which
+ * is what the boundary probe verifies. A super-admin in default-tenant is not
+ * tenant-scoped and legitimately receives every organisation's rows.
+ *
+ * `client.setTenantOverride()` is documented as scoping those reads by setting an
+ * X-Tenant header, but the API ignores that header on reads (and on creates), so
+ * the override changes nothing. Rather than ship a control that looks like it
+ * filters and does not, the super-admin's picker filters what was already
+ * fetched, and is labelled as a view. */
+export function scopeToTenant(fleet: Fleet, tenant: string): Fleet {
+  if (!tenant) return fleet;
+  const keep = <T extends SuperoRecord>(xs: T[]) => xs.filter((x) => tenantOf(x) === tenant);
+  return {
+    clusters: keep(fleet.clusters),
+    environments: keep(fleet.environments),
+    leases: keep(fleet.leases),
+    findings: keep(fleet.findings),
+    policy: fleet.policies.find((p) => tenantOf(p) === tenant) ?? null,
+    policies: fleet.policies,
+  };
 }
 
 export function byUuid<T extends SuperoRecord>(items: T[], uuid: string): T | null {

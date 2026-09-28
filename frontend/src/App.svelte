@@ -1,6 +1,6 @@
 <script lang="ts">
   import { EMPTY_FLEET, type Fleet } from './lib/domain';
-  import { loadFleet } from './lib/api';
+  import { loadFleet, scopeToTenant } from './lib/api';
   import { current, navigate, onChange, type Route } from './lib/router';
   import { isStaff } from './lib/rbac';
   import { C } from './lib/format';
@@ -20,10 +20,14 @@
   let route = $state<Route>(current());
   let authed = $state(client.isAuthenticated());
   let showLogin = $state(false);
-  let fleet = $state<Fleet>(EMPTY_FLEET);
+  let tenant = $state('');
+  let loaded = $state<Fleet>(EMPTY_FLEET);
+  /* A tenant-scoped user already receives only their organisation's rows, so this
+   * is a no-op for them. It only narrows the super-admin's cross-organisation
+   * view. See scopeToTenant() for why this is client-side. */
+  const fleet = $derived(scopeToTenant(loaded, tenant));
   let loading = $state(true);
   let loadError = $state('');
-  let tenant = $state('');
 
   $effect(() => onChange((r) => { route = r; }));
 
@@ -43,7 +47,7 @@
   async function reload() {
     loading = true; loadError = '';
     try {
-      fleet = await loadFleet();
+      loaded = await loadFleet();
     } catch (e) {
       loadError = e instanceof Error ? e.message : 'Could not load the fleet.';
     } finally {
@@ -55,8 +59,11 @@
     if (authed) { void tenant; void reload(); }
   });
 
+  /* View filter only. client.setTenantOverride() is documented as scoping reads
+   * via an X-Tenant header, but the API ignores that header, so calling it would
+   * change nothing and imply a boundary that is not being enforced here. The real
+   * boundary is server-side and applies to tenant-scoped users. */
   function onTenant(name: string) {
-    try { client.setTenantOverride(name || null); } catch { /* not permitted for this role */ }
     tenant = name;
   }
 

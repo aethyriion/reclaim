@@ -26,7 +26,8 @@ Captured output from my run is in `EVIDENCE.txt`.
 | 3 | `build_plan` vertical misclassification cascades silently | Quality issue | `03` |
 | 4 | `build_doctor` stops checking a UI it does not recognise | Quality issue | `04` |
 | 5 | Deploys use a mutable `:latest` image tag | Root cause for a known, already-mitigated issue | `05` |
-| 6 | Model survives a third tenant added post-hoc | Verification, not a finding | `06` |
+| 6 | `setTenantOverride()` / `X-Tenant` ignored on reads | **Confirmed bug** — documented mechanism is inert | inline |
+| V | Model survives a third tenant added post-hoc | Verification, not a finding | `06` |
 | R1 | ~~Workflow definition schema is undocumented~~ | **Retracted — my error** | — |
 | R2 | Multi-tenancy flag — over-claimed, then over-retracted | **Corrected; claim stands, mechanism was wrong** | `06` |
 | R3 | ~~`workflows` cannot be imported by the deploy key~~ | **Documented, and I was warned** | — |
@@ -178,6 +179,18 @@ the feedback, without changing a single check:
 
 > `ui/app.js looks like a loader, not an application; UI checks skipped.`
 
+There is a second-order effect worth knowing, which I hit myself. Once the
+application lives in `ui/bundle.js`, `ui/app.js` becomes a stable loader whose
+hash never changes — so **`build_smoke_test(expected_app_js_sha1=...)` stops
+detecting stale rolls for that app.** It kept reporting the same sha1 across two
+completely different application versions. The check that caught a real stale roll
+for me earlier is silently defeated by the same architecture the linter cannot see.
+
+If the bundled-SPA shape is something you want to support rather than merely
+tolerate, the fix for both is the same: identify the deployed artifact by the
+bundle `checksum` that `build_publish` already returns, rather than by hashing one
+conventionally-named file.
+
 **Repro:** `repro/04_doctor_skips_bundled_ui.py`
 
 ---
@@ -217,6 +230,44 @@ Two changes would close it:
    after the fact by fetching `app.js` over HTTP and hashing it.
 
 **Repro:** `repro/05_deploy_status_artifact.py`
+
+---
+
+## 6. `client.setTenantOverride()` does nothing — `X-Tenant` is ignored on reads
+
+**Confirmed.** SKILLS §7.5a documents the super-admin tenant switcher like this:
+
+> `client.setTenantOverride(name)` — it sets the `X-Tenant` header on every later
+> CRUD call.
+
+It does set the header. The API ignores it. Reading `cluster` as a super-admin with
+every possible override value returns an identical result set:
+
+```
+no override                → 6 clusters, tenants=[contoso, fabrikam, northwind]
+X-Tenant: northwind        → 6 clusters, tenants=[contoso, fabrikam, northwind]
+X-Tenant: contoso          → 6 clusters, tenants=[contoso, fabrikam, northwind]
+X-Tenant: fabrikam         → 6 clusters, tenants=[contoso, fabrikam, northwind]
+X-Tenant: default-tenant   → 6 clusters, tenants=[contoso, fabrikam, northwind]
+```
+
+This is not an isolation failure — a super-admin in `default-tenant` is not
+tenant-scoped and is *supposed* to see every organisation. Tenant-scoped users are
+correctly confined, which finding 1's controls and the boundary probe both show.
+
+The problem is that the documented way to build a tenant switcher silently does
+nothing, so an app that follows SKILLS ships a control that looks like it enforces
+a scope and enforces none. I shipped exactly that for two versions before testing
+it. Reclaim now filters client-side and labels the control `Viewing: <org>`, because
+calling an API that does nothing, to imply a boundary that is not enforced, is worse
+than not offering the control.
+
+Either honour the header for principals entitled to cross-tenant reads, or reject it
+with a 400 so the caller learns immediately. Accepting and ignoring it is the one
+option that produces a convincing lie.
+
+**Repro:** the override table above; `repro/01_policy_scope_leak.py` covers the
+related read-path scoping.
 
 ---
 
@@ -353,8 +404,7 @@ and trusts it ships a broken app.
   MCP calls and prescribes `files_b64gz`, so the class of problem is known — but it
   bites ordinary REST clients too, and the error body gives no hint. Every script in
   `repro/` sets a browser UA for this reason.
-- **`X-Tenant` is ignored on create.** A raw `POST /api/v1/crud/{domain}/{schema}`
-  with `X-Tenant: northwind` lands the record in `default-tenant`; routing is by
-  `parent_uuid`. This is probably correct — tenancy comes from the parent hierarchy,
-  and the supported path is `seed_record(tenant_name=...)` — but a header that is
-  accepted and silently ignored is worth either honouring or rejecting.
+- **`X-Tenant` is ignored on create**, and routing is by `parent_uuid` instead.
+  Arguably correct — tenancy comes from the parent hierarchy, and the supported
+  seeding path is `seed_record(tenant_name=...)`. But see finding 6: the same
+  header is also ignored on reads, where it *is* the documented mechanism.

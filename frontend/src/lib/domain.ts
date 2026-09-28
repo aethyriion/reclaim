@@ -91,11 +91,14 @@ export interface Fleet {
   environments: Environment[];
   leases: Lease[];
   findings: DriftFinding[];
+  /** The policy in force for the current view. */
   policy: FleetPolicy | null;
+  /** Every policy visible to this principal — a super-admin sees one per org. */
+  policies: FleetPolicy[];
 }
 
 export const EMPTY_FLEET: Fleet = {
-  clusters: [], environments: [], leases: [], findings: [], policy: null,
+  clusters: [], environments: [], leases: [], findings: [], policy: null, policies: [],
 };
 
 export interface ResolutionOption {

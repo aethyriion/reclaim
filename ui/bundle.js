@@ -4521,7 +4521,8 @@ var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "acce
     environments: [],
     leases: [],
     findings: [],
-    policy: null
+    policy: null,
+    policies: []
   };
   const RESOLUTIONS = [
     {
@@ -4564,7 +4565,14 @@ var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "acce
       list("drift_finding"),
       list("fleet_policy")
     ]);
-    return { clusters, environments, leases, findings, policy: policies[0] ?? null };
+    return {
+      clusters,
+      environments,
+      leases,
+      findings,
+      policy: policies[0] ?? null,
+      policies
+    };
   }
   async function loadTenants() {
     const declared = window.__SUPERO_CONFIG?.tenants;
@@ -4580,6 +4588,22 @@ var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "acce
     } catch {
       return [];
     }
+  }
+  function tenantOf(r2) {
+    const fq = r2.fq_name;
+    return Array.isArray(fq) && fq.length > 2 ? String(fq[2]) : "";
+  }
+  function scopeToTenant(fleet, tenant) {
+    if (!tenant) return fleet;
+    const keep = (xs) => xs.filter((x) => tenantOf(x) === tenant);
+    return {
+      clusters: keep(fleet.clusters),
+      environments: keep(fleet.environments),
+      leases: keep(fleet.leases),
+      findings: keep(fleet.findings),
+      policy: fleet.policies.find((p) => tenantOf(p) === tenant) ?? null,
+      policies: fleet.policies
+    };
   }
   function byUuid(items, uuid) {
     return items.find((i) => i.uuid === uuid) ?? null;
@@ -4863,7 +4887,7 @@ var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "acce
   delegate(["click"]);
   var root$e = /* @__PURE__ */ from_html(`<a class="whitespace-nowrap rounded-[7px] px-3 py-[7px] text-[13px] font-semibold no-underline"> </a>`);
   var root_1$a = /* @__PURE__ */ from_html(`<option> </option>`);
-  var root_2$7 = /* @__PURE__ */ from_html(`<select class="rounded-[7px] border border-rc-line bg-rc-panel px-2.5 py-1.5 text-[12.5px] text-rc-text"><option>All organisations</option><!></select>`);
+  var root_2$7 = /* @__PURE__ */ from_html(`<select class="rounded-[7px] border border-rc-line bg-rc-panel px-2.5 py-1.5 text-[12.5px] text-rc-text"><option>Viewing: all organisations</option><!></select>`);
   var root_3$7 = /* @__PURE__ */ from_html(`<div class="min-h-screen bg-rc-bg text-rc-text"><header class="flex flex-wrap items-center justify-between gap-3.5 border-b border-rc-line bg-rc-panel2 px-5 py-3"><div class="flex flex-wrap items-center gap-4"><div class="flex items-center gap-2.5"><div class="flex h-6 w-6 items-center justify-center rounded-md text-[13px] font-extrabold" style="border:1px solid #38BDF877;background:#38BDF81a;color:#38BDF8">&#9851;</div> <span class="text-[15.5px] font-extrabold">Reclaim</span></div> <nav class="flex flex-wrap gap-1.5"></nav></div> <div class="flex flex-wrap items-center gap-3"><!> <div class="text-right"><div class="text-[12.5px] font-semibold"> </div> <div class="text-[11px] text-rc-dim"> </div></div> <!></div></header> <main class="mx-auto max-w-[1180px] px-5 pb-[60px] pt-6"><!></main></div>`);
   function Shell($$anchor, $$props) {
     push($$props, true);
@@ -4919,10 +4943,10 @@ var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "acce
         var node_1 = sibling(option);
         each(node_1, 17, () => get(tenants), (t) => t.name, ($$anchor3, t) => {
           var option_1 = root_1$a();
-          var text_1 = only_child(option_1, true);
+          var text_1 = only_child(option_1);
           var option_1_value = {};
           template_effect(() => {
-            set_text(text_1, get(t).label);
+            set_text(text_1, `Viewing: ${get(t).label ?? ""}`);
             if (option_1_value !== (option_1_value = get(t).name)) {
               option_1.value = (option_1.__value = option_1_value) ?? "";
             }
@@ -6869,10 +6893,11 @@ var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "acce
     let route = /* @__PURE__ */ state(proxy(current()));
     let authed = /* @__PURE__ */ state(proxy(client.isAuthenticated()));
     let showLogin = /* @__PURE__ */ state(false);
-    let fleet = /* @__PURE__ */ state(proxy(EMPTY_FLEET));
+    let tenant = /* @__PURE__ */ state("");
+    let loaded = /* @__PURE__ */ state(proxy(EMPTY_FLEET));
+    const fleet = /* @__PURE__ */ user_derived(() => scopeToTenant(get(loaded), get(tenant)));
     let loading = /* @__PURE__ */ state(true);
     let loadError = /* @__PURE__ */ state("");
-    let tenant = /* @__PURE__ */ state("");
     user_effect(() => onChange((r2) => {
       set(route, r2, true);
     }));
@@ -6897,7 +6922,7 @@ var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "acce
       set(loading, true);
       set(loadError, "");
       try {
-        set(fleet, await loadFleet(), true);
+        set(loaded, await loadFleet(), true);
       } catch (e) {
         set(loadError, e instanceof Error ? e.message : "Could not load the fleet.", true);
       } finally {
@@ -6911,10 +6936,6 @@ var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "acce
       }
     });
     function onTenant(name) {
-      try {
-        client.setTenantOverride(name || null);
-      } catch {
-      }
       set(tenant, name, true);
     }
     function logout() {

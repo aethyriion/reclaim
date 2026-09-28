@@ -52,9 +52,9 @@
       {#if canSwitchTenant() && tenants.length}
         <select class="rounded-[7px] border border-rc-line bg-rc-panel px-2.5 py-1.5 text-[12.5px] text-rc-text"
                 value={tenant} onchange={(e) => onTenant((e.currentTarget as HTMLSelectElement).value)}>
-          <option value="">All organisations</option>
+          <option value="">Viewing: all organisations</option>
           {#each tenants as t (t.name)}
-            <option value={t.name}>{t.label}</option>
+            <option value={t.name}>Viewing: {t.label}</option>
           {/each}
         </select>
       {/if}
