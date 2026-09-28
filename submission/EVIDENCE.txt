@@ -1,0 +1,129 @@
+Reclaim - reproduction evidence
+generated: 2026-09-28T12:44:37Z
+host:      Linux 7.2.5-3-omarchy  python: Python 3.14.0
+
+
+### 01_policy_scope_leak.py
+
+==============================================================================
+BUG 1 - policy record filter and hidden_fields leak across roles
+==============================================================================
+[    ] ground truth (northwind, API key)
+       observed: 4 leases across 2 owners; 2 drift findings
+[FAIL] tenant_admin lists leases (its rule has NO filter_field)
+       expected: all 4 leases in northwind
+       observed: 1 lease(s); 1 owned by the admin -> the tenant_user owner filter was applied to tenant_admin
+[PASS] tenant_user lists leases (its rule HAS filter_field) - control
+       expected: only rows owned by the engineer
+       observed: 3 row(s), 0 owned by someone else
+[    ] field is stored on the record at all
+       observed: API-key principal sees wasted_cost_usd: True
+[FAIL] tenant_admin reads wasted_cost_usd (its rule has NO hidden_fields)
+       expected: visible to the admin
+       observed: visible: False -> the tenant_user hidden_fields was applied to tenant_admin
+[PASS] tenant_user reads wasted_cost_usd (its rule HIDES it) - control
+       expected: hidden from the engineer
+       observed: visible: False
+[PASS] no privilege escalation in the other direction
+       expected: the engineer never sees more than the admin
+       observed: engineer leases=3 admin leases=1; engineer cost-field=False admin cost-field=False
+------------------------------------------------------------------------------
+RESULT: DOES NOT behave as documented
+==============================================================================
+(exit 1)
+
+### 02_stage_bundle_internal_url.py
+
+==============================================================================
+BUG 2 - build_stage_bundle returns an unreachable in-cluster upload URL
+==============================================================================
+[    ] build_stage_bundle upload_url
+       observed: http://platform-core-service:8083/api/v1/files/stephen-rhodes/upload
+[FAIL] upload_url host is publicly resolvable
+       expected: a DNS name an MCP client can reach
+       observed: 'platform-core-service' resolves: False
+[FAIL] upload_url uses TLS
+       expected: https
+       observed: scheme is 'http'
+[FAIL] uploading to the documented upload_url succeeds
+       expected: HTTP 200/201 with a file_id
+       observed: HTTP 0 {"error": "URLError: <urlopen error [Errno -3] Temporary failure in name resolution>"}
+[    ] same path on the public host
+       observed: https://api.supero.dev/api/v1/files/stephen-rhodes/upload -> HTTP 201 file_id=file_2rjeq3APnvAV
+[    ] conclusion
+       observed: the endpoint is correct; only the HOST in the response is wrong (internal service DNS instead of the public API host)
+------------------------------------------------------------------------------
+RESULT: DOES NOT behave as documented
+==============================================================================
+(exit 1)
+
+### 03_vertical_misclassification.py
+
+==============================================================================
+OBSERVATION 3 - build_plan vertical misclassification cascades silently
+==============================================================================
+[FAIL] vertical detected for an explicitly Kubernetes description
+       expected: an infrastructure / internal-tools vertical
+       observed: 'real estate / property'
+[FAIL] recommended page sections suit the domain
+       expected: no real-estate sections for a cluster
+       observed: recommends: Photo Gallery, Floor Plan, Location & Neighborhood, Agent Contact, Features & Amenities, square feet
+[FAIL] recommended reference app suits the domain
+       expected: ops-dashboard (an internal operations tool)
+       observed: recommends 'commerce-marketplace'
+[FAIL] passing is_multi_tenant/public_facing corrects the vertical
+       expected: explicit flags fix the classification
+       observed: explicit run still detects 'real estate / property'
+[    ] confidence signalling
+       observed: hero archetype prints a confidence: True; vertical prints one: False -> a caller cannot gate on the vertical being uncertain
+------------------------------------------------------------------------------
+RESULT: DOES NOT behave as documented
+==============================================================================
+(exit 1)
+
+### 04_doctor_skips_bundled_ui.py
+
+==============================================================================
+OBSERVATION 4 - build_doctor silently skips UI checks for a bundled SPA
+==============================================================================
+[    ] A) hand-written React ui/app.js
+       observed: {"verdict": "ready (review warnings)", "errors": 0, "richness_block_present": true, "richness_score": 4, "is_path_b": true, "components": 3, "has_landing": false, "tenant_selector": false}
+[    ] B) loader + ui/bundle.js + ui/app.css
+       observed: {"verdict": "ready (review warnings)", "errors": 0, "richness_block_present": false, "richness_score": null, "is_path_b": false, "components": 0, "has_landing": false, "tenant_selector": false}
+[PASS] both bundles are accepted
+       expected: no errors in either
+       observed: A errors=0 verdict='ready (review warnings)'; B errors=0 verdict='ready (review warnings)'
+[FAIL] the richness block is present for BOTH bundles
+       expected: present in both, scored low for B if it cannot see the UI
+       observed: A present=True (score 4); B present=False (score None)
+[FAIL] doctor warns when it cannot analyse the UI
+       expected: a warning naming the skipped checks
+       observed: B verdict is 'ready (review warnings)' with components=0, is_path_b=False, has_landing=False and no message saying the UI checks were skipped
+[    ] why it matters
+       observed: a gate that no-ops on unrecognised input passes a real regression for the same reason it passes this bundle
+------------------------------------------------------------------------------
+RESULT: DOES NOT behave as documented
+==============================================================================
+(exit 1)
+
+### 05_deploy_status_artifact.py
+
+==============================================================================
+CONTRIBUTION 5 - deploys use a mutable :latest image tag
+==============================================================================
+[    ] status
+       observed: 'running' generation_uuid=a5c6bc04-55bb-4010-a86c-4d046fc38525
+[    ] image_uri
+       observed: us-central1-docker.pkg.dev/supero-gcp-dev/superoapps/preview-stephen-rhodes-reclaim:latest
+[FAIL] the deployed image is identified immutably
+       expected: a digest (@sha256:...) or a per-version tag
+       observed: tag is 'latest' - mutable, reused by every deploy of this service
+[FAIL] build_deploy_status reports what is actually running
+       expected: an artifact hash or digest for the live revision
+       observed: response carries the REQUESTED generation_uuid and a floating image tag; no field identifies the artifact actually serving
+[    ] already mitigated by
+       observed: build_smoke_test(expected_app_js_sha1=...), which caught a real stale roll during this build
+------------------------------------------------------------------------------
+RESULT: DOES NOT behave as documented
+==============================================================================
+(exit 1)

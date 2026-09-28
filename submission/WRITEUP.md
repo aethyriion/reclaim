@@ -1,8 +1,12 @@
 # Supero build challenge — Reclaim
 
-**Live URL:** _(filled in below)_
-**Source:** _(optional GitHub link)_
+**Live URL:** _(filled in at submission)_
+**Source:** https://github.com/aethyriion/reclaim
 **Built:** over MCP, from Claude Code, against `app.supero.dev/mcp/v1/messages`.
+
+Full technical detail on the platform findings, with runnable reproductions, is in
+[`FINDINGS.md`](./FINDINGS.md) and [`repro/`](./repro). Captured output is in
+[`EVIDENCE.txt`](./EVIDENCE.txt).
 
 ---
 
@@ -17,8 +21,8 @@ I picked it because it is the same shape as the open problem in your own posting
 > "is this app live?" still has two disjoint sources of truth — a backend record and
 > five fields the browser writes — and no teardown path reconciles them.
 
-Reclaim is four working entities plus one settings row:
-`cluster`, `environment`, `lease`, `drift_finding`, `fleet_policy`.
+Five entities: `cluster`, `environment`, `lease`, `drift_finding`, and a one-row
+`fleet_policy` per organisation.
 
 **The one decision the rest follows from:** an environment stores what Reclaim
 *believes* (`env_state`) separately from what the cluster last *reported*
@@ -38,6 +42,10 @@ partition and log it as a success. So the destructive resolution is **withheld**
 whenever the observation is older than the organisation's staleness window, and the
 UI says why rather than greying out a button.
 
+`staleness.ts` is pure and takes `now` as an argument, so the verdict rendered on
+screen can never drift from the one an action is checked against. It has the only
+unit tests in the project.
+
 ## The state with no happy path
 
 A lease expires, the release is attempted, and it **fails**. The record says
@@ -52,322 +60,205 @@ three options that are all bad:
 
 Only the destructive one depends on a fresh observation. The other two are human
 assertions about ownership, not inferences from a reading, so staleness does not bar
-them. The seed ships one of each: one actionable, one **unresolvable** (unreachable
-cluster, 6-hour-old observation), one parked awaiting a second approver.
+them.
+
+The seed ships one of each: one actionable, one **unresolvable** (unreachable
+cluster, six-hour-old observation), one parked awaiting a second approver.
 
 ## Multi-tenancy
 
-On from generation. Two organisations — Northwind Systems and Contoso Cloud — with
-different policies, so the second tenant is exercised from the first run rather than
-being a claim. `platform_engineer` is owner-scoped on leases; `wasted_cost_usd` is
-hidden from engineers at the field level, server-side.
+On from the first run, not retrofitted. Two organisations — Northwind Systems and
+Contoso Cloud — with different policies, so the second tenant is exercised rather
+than asserted.
 
-I probed my own boundary, as invited. Findings are in `TENANT-PROBE.md`.
+I attacked my own boundary, as invited. Seven probes, results in
+[`TENANT-PROBE.txt`](./TENANT-PROBE.txt): **6 held, 0 breached.** Cross-tenant reads
+and writes are refused (`Access denied: this reclaim:cluster belongs to another
+tenant`), a forged `X-Tenant` header changes nothing, an engineer cannot resolve
+drift, and lease reads are owner-scoped server-side.
+
+The seventh is not a breach but is not clean either, and it turned out to be a
+platform bug — finding 1 below.
+
+## `require_dual_approval` is a flag; tenancy is not
+
+`fleet_policy.require_dual_approval` is per-organisation and defaults **off** —
+deliberately the same shape you criticise in your own platform.
+
+The distinction that makes it defensible: **a flag is only honest when turning it on
+later is cheap.** Flipping dual-approval changes the next decision and nothing else;
+nothing already stored becomes wrong. Retrofitting tenancy rewrites every query,
+every policy and the login path. One qualifies as a setting. The other has to be
+structural, so it is.
 
 ## One decision I reversed
 
 I started with a per-*team* scope for engineers — "an engineer sees their team's
 leases" — and it survived about as long as it took to read how record filters work.
-The platform resolves **one** record filter per (role, entity) and applies it to
-reads *and* writes, and the only sanctioned owner field is `owner_username` matched
-against `$user.name`. There is no `owner_in`, no multi-field filter, so "my team's
-rows" is not expressible without either widening to the whole organisation or
-inventing a second role per team.
+The platform resolves one record filter per (role, entity) and applies it to reads
+*and* writes, and the only sanctioned owner field is `owner_username` matched against
+`$user.name`. There is no `owner_in`, no multi-field filter, so "my team's rows" is
+not expressible without either widening to the whole organisation or inventing a role
+per team.
 
-I reversed to strict `owner_username` scoping and moved the team-level visibility
-into the *fleet* view, which reads environments (organisation-wide) and carries a
-denormalised `current_holder`. So an engineer can see who holds what, but only their
-own lease records with the error detail on them.
+I reversed to strict `owner_username` scoping and moved team-level visibility into
+the *fleet* view, which reads environments organisation-wide and carries a
+denormalised `current_holder`. An engineer can see who holds what, but only their own
+lease records with the error detail on them.
 
 That is a worse product and a more honest one. The alternative was a UI that filtered
-by team client-side while the server returned everything — which looks identical in a
-demo and is a data leak in production.
+by team client-side while the server returned everything — identical in a demo, a
+data leak in production.
 
 ## What I liked most
 
-**The MCP data-plane contract, and that it is enforced by the docs rather than
-hoped for.** The server instructions open by forbidding the agent from reading local
-project state, running a local CLI, or inferring anything from disk — and separately
-forbid tunnelling a locally-run app through cloudflared and calling it a deployment.
-Both of those are things an agent will absolutely do to make a task look finished.
-Writing them down as a contract, at the top, is someone having watched it happen and
-closed the door.
+**The MCP data-plane contract, and that it is enforced by the docs rather than hoped
+for.** The server instructions open by forbidding the agent from reading local project
+state, running a local CLI, or inferring anything from disk — and separately forbid
+tunnelling a locally-run app through cloudflared and calling it a deployment. Both are
+things an agent will absolutely do to make a task look finished. Writing them down as
+a contract, at the top, is someone having watched it happen and closed the door.
 
-Second: `build_doctor` earns its place. `build_validate` passed my bundle clean, and
-doctor then caught four things that would have shipped broken — including two that
-were *masked* by a third until I fixed it. That is a real preflight, not a linter.
+Second, and more concretely: **`build_smoke_test(expected_app_js_sha1=...)` saved this
+submission.** A deploy reported `running` with the new version's `generation_uuid`
+while serving the previous bundle. That check caught it, named the remedy, and the
+remedy worked. It is the only reason I did not ship a stale build and call it done.
 
 ## What I would improve
 
-Four things, in the order I would fix them.
+Five items. Two are confirmed bugs with reproductions; two are quality issues; one is
+a root cause for something you already catch.
 
-### 1. `build_stage_bundle` returns an unreachable internal address
+**Before those, three retractions.** I initially had eight findings. Three were me not
+having read the documentation, and I would rather hand you a corrected list than a
+confident wrong one.
 
-It hands back:
+### 1. Policy record filters and `hidden_fields` leak across roles — confirmed
+
+SKILLS §6 states: *"The platform resolves one record filter per (role, entity)."*
+Per (role, entity). It does not.
+
+`tenant_admin` has an explicit rule on `lease` with **no** `filter_field` and on
+`drift_finding` with **no** `hidden_fields`. The `tenant_user` restrictions on the
+same entities are applied to it anyway:
 
 ```
-"upload_url": "http://platform-core-service:8083/api/v1/files/stephen-rhodes/upload"
+ground truth (API key)              4 leases in northwind; wasted_cost_usd stored
+tenant_admin lists leases           1     ← its own rule has no filter
+tenant_admin reads wasted_cost_usd  False ← its own rule hides nothing
+tenant_user  (control)              3 own leases, field correctly hidden
 ```
 
-That is in-cluster service DNS. It resolves inside your namespace and nowhere else,
-so it cannot work from any MCP client — which is the only thing that calls this tool.
+Fail-closed, so not a data leak — but an operator silently loses rows and fields they
+own, and it is unfixable from the policy file because the permissive rule is already
+there and is being ignored.
+
+It cost me a deploy before I understood it: the seed principal is an admin, so
+`setup.py` 403'd on exactly the three entities my `tenant_user` policy had made
+read-only, **lost 16 of 27 records, and exited 0.** A permission denial during seed
+should fail the build; the log currently classifies it as "transient/unclassified".
+
+*Repro: `repro/01_policy_scope_leak.py`*
+
+### 2. `build_stage_bundle` returns an address only reachable inside your cluster — confirmed
+
+```
+upload_url: http://platform-core-service:8083/api/v1/files/<domain>/upload
+host resolves: False    →  [Errno -3] Temporary failure in name resolution
+```
+
 The same path on `https://api.supero.dev` works first try and returns a valid
-`file_id`. Also note `http://`, not `https://`.
+`file_id`. The endpoint is right; only the host is wrong, and it is `http://`. The
+tool's entire audience is external MCP clients, the documented flow cannot be
+completed as written, and no doc mentions the upload host.
 
-Fix is a one-liner; the interesting part is that nothing catches it, which suggests
-the large-bundle path has no end-to-end test from outside the cluster.
+*Repro: `repro/02_stage_bundle_internal_url.py`*
 
-### 2. Multi-tenancy is not a flag on the MCP path — it is an *inference*
+### 3. `build_plan`'s vertical detector misclassifies, and it cascades silently
 
-Your posting says it is "a generation-time flag, it defaults to off." Over MCP it is
-not a flag at all. `build_create_project` has no tenancy parameter. The only
-`is_multi_tenant` lives on `build_plan`, it is optional, and its own description says
-*"Inferred from the description if omitted."*
+A description naming Kubernetes, clusters, environments and drift reconciliation is
+classified **real estate / property** — on the word *lease*. It then recommends Photo
+Gallery, Floor Plan, Location & Neighborhood and Agent Contact for a Kubernetes
+cluster, a photographic/serif theme for an internal ops tool, and
+`commerce-marketplace` as the reference app.
 
-That is worse than default-off, because default-off is at least legible. An inferred
-hint means a keyword in your prose silently decides your tenancy model, nothing on
-the project record says which way it went, and the consequence lands in the auth
-layer — the most expensive place to retrofit.
+The response prints a confidence for the hero archetype and **none for the vertical**,
+so a caller has nothing to gate on. Surfacing one, and saying "unsure" below a
+threshold, would cost little.
 
-**What I would do about it:** make it a required argument with no default, on
-`build_create_project`, where it is durable and inspectable. Not "default on" —
-*refuse to guess*. The test for whether something may be a flag is whether turning it
-on later is cheap. I applied that test inside my own app: `require_dual_approval` is
-a per-org flag defaulting off, because flipping it changes only the next decision and
-invalidates nothing already stored. Tenancy fails the same test, so it should not be
-a flag, and certainly not an inferred one.
+*Repro: `repro/03_vertical_misclassification.py`*
 
-### 3. The vertical detector misclassifies, silently, and it cascades
+### 4. `build_doctor` stops checking a UI it does not recognise, and does not say so
 
-My description named Kubernetes, clusters, environments, platform engineering and
-drift reconciliation. `build_plan` returned:
+Two minimal bundles, identical except `ui/app.js` — one hand-written React, one a
+loader injecting a compiled bundle:
 
 ```
-Detected vertical: real estate / property
+A) React    richness present: true (score 4)   is_path_b: true    components: 3
+B) loader   richness present: FALSE            is_path_b: false   components: 0
+both: errors 0, verdict "ready (review warnings)"
 ```
 
-It keyed on the word **lease**. Then it told me to build a Photo Gallery, Floor Plan,
-Location & Neighborhood and Agent Contact, with a "hero image" — for a Kubernetes
-cluster — and recommended `commerce-marketplace` as my reference app and a
-photographic/lifestyle/serif theme for an internal ops tool. Passing
-`is_multi_tenant: true` explicitly fixed the login section and left the vertical
-wrong.
+For B the `richness` block is **absent**, not scored zero, and the verdict is
+unchanged. The app has a landing page, a tenant picker and ten routed screens; none is
+visible to a grep over one file.
 
-One misclassification cascaded into five wrong recommendations, none of them flagged
-as low-confidence. The output does print a confidence signal for the hero archetype —
-so surfacing the same for the vertical, and saying "I am not sure, tell me" below a
-threshold, would cost little. An agent that trusts this output ships a Floor Plan tab.
+I am not asking you to support bundlers. A gate that no-ops on unrecognised input
+passes a real regression for the same reason it passes this. One line fixes the
+feedback without changing a check: *"ui/app.js looks like a loader; UI checks
+skipped."*
 
-### 4. `WORKFLOW_DEFINITIONS` and its own linter disagree on the schema
+*Repro: `repro/04_doctor_skips_bundled_ui.py`*
 
-SKILLS §6 documents workflow definitions with `"id"`, and event bindings referencing
-them with `"workflow_id"`. I wrote exactly that. `build_doctor` then reported every
-definition as *missing `workflow_id`*, with `Available: ['<none defined>']`, and both
-event bindings as dangling. Emitting **both** keys fixed it.
-
-Once that cleared, doctor surfaced three further requirements that appear nowhere in
-SKILLS: every definition needs `"status": "Active"|"Draft"|"Disabled"|"Archived"`; a
-`crud_operation` compensate block needs its own `operation` verb and `record_uuid`;
-and under `on_error: "compensate"` even a pure bookkeeping step needs an explicit
-`skip_acknowledged`. All reasonable rules — none documented, and all invisible until
-the key-name mismatch above was resolved, because that error short-circuited the rest
-of the check.
-
-The fix is not more docs. It is that SKILLS and the doctor should be generated from
-one schema, so they cannot drift.
-
-### 5. An unregisterable custom role does not disable its policy — it *escalates* it onto `tenant_admin`
-
-This is the most serious thing I found, and it cost me a whole deploy.
-
-I registered a custom role the documented way — `RoleDef(name="platform_engineer",
-base_role="tenant_user", ...)` passed as `custom_roles=` to `setup.run`, with a
-matching restrictive `PolicyDef`. Creating a role is a domain-level write, and a
-cloud deploy runs under a **project-scoped** key, so registration was refused:
+### 5. Deploys use a mutable `:latest` tag — a cause for something you already catch
 
 ```
-Permission denied: Domain-level objects require admin access
+image_uri: .../superoapps/preview-<domain>-<project>:latest
 ```
 
-So far, fine — a capability my key lacks. What happened next is not fine. The
-platform did not drop the orphaned policy, and did not fail the run. It
-**normalised the policy onto a built-in role**:
+A floating per-service tag, reused every deploy. A revision pinned to it carries
+nothing identifying which build it got, so nothing can detect it got the wrong one —
+and `build_teardown` fixes it because deleting the service forces a fresh pull.
 
-```
-role 'platform_engineer' is not a platform RBAC role -> mapped to 'tenant_admin'
-```
+Deploy by digest or tag per version (`build_publish` already returns a `checksum`),
+and return the running artifact's hash from `build_deploy_status`, so `running` means
+running *this*. That makes "which version is in that pod" the five-second question
+your posting says it should be.
 
-My `default_access="none"` engineer policy landed **on top of the `tenant_admin`
-policy and replaced it.** The seed principal is an admin, so the seed then failed:
+*Repro: `repro/05_deploy_status_artifact.py`*
 
-```
-Failed to seed Cluster nw-prod-a: HTTP 403 --
-  "Your role does not have create access to reclaim:cluster"
-SEED FAILURES — Cluster: 4 lost · Environment: 10 lost · FleetPolicy: 2 lost
-```
+### Retracted — my errors
 
-Note exactly *which* entities failed. `cluster`, `environment` and `fleet_policy`
-were the three my engineer policy made read-only. `lease` and `drift_finding` —
-the two I had granted `can_create` — seeded fine. The restriction I wrote for the
-**least**-privileged role was applied verbatim to the **most**-privileged one.
-
-The app deployed "successfully" and served an empty fleet. The run exited 0.
-
-**Three separate problems here, in descending severity:**
-
-1. **Normalising an unknown role onto `tenant_admin` is a privilege-boundary
-   violation in the dangerous direction.** A policy written for a restricted role
-   should never be able to land on an admin role. If the target role cannot be
-   resolved, the only safe outcomes are to drop the policy or to fail the setup.
-   Silently retargeting it at the most privileged built-in is the one behaviour
-   that can lock an operator out of their own project.
-2. **The `base_role` was right there.** I declared `base_role="tenant_user"`, and
-   the *users* carrying the role were correctly normalised to `tenant_user`. Only
-   the *policy* went to `tenant_admin`. Users and policies normalise the same
-   unknown role in opposite directions, which is how the two halves end up
-   disagreeing about who the policy was for.
-3. **A seed that loses 16 of 27 records should not exit 0.** The log says the
-   failures are "transient/unclassified, not structural" and points at
-   `SUPERO_STRICT_SEED=1`. A 403 on create is neither transient nor unclassified —
-   it is the most structural failure there is. I would invert that default: a
-   permission denial during seed fails the build, and `SUPERO_LENIENT_SEED=1` opts
-   out.
-
-SKILLS §6a does warn that an unregistered role gets "silently normalized to a
-built-in" and says to register `RoleDef`s first — which I did. What it does not say
-is that registration is **impossible** under the key a cloud deploy actually runs
-with, or that the normalisation target for a *policy* is `tenant_admin` rather than
-the `base_role` you declared.
-
-**How I fixed it:** dropped the custom role entirely and wrote the engineer policy
-against the built-in `tenant_user` — which is what the platform was normalising my
-users to anyway, so the custom role was buying a label and costing an outage.
-
-### 6. `workflows` cannot be imported by the key that deploys the app
-
-Same root cause, less damage. My five workflow definitions are valid and pass
-`build_doctor` with zero findings, but the deploy logs:
-
-```
-'workflows': Unexpected error: Permission denied: Domain-level objects require admin access
-workflows            Import failed
-Workflow 'on_lease_claimed': Create Failed: Schema not found for type
-  'workflow_definition' in domain 'stephen-rhodes', namespace 'wf'
-```
-
-So on a cloud deploy, **no workflow and no event binding can ever run** — the
-feature is effectively unavailable to exactly the deployment path the platform
-steers you toward. `build_doctor` flags this as a warning and is right to, but the
-warning reads as "may log a permission denied (non-fatal)" when the real
-consequence is that a documented, heavily-recommended capability is simply absent
-in production.
-
-I designed for it: every workflow-driven action in Reclaim also names the CRUD
-writes that are equivalent and falls back to them, running as the caller so RBAC
-still decides. The app works either way. But an app that followed SKILLS' advice to
-"wire 2-3 real workflows + EVENT_BINDINGS" and *trusted* them would ship with dead
-buttons and a stale fleet view, and nothing in the deploy output says so loudly
-enough.
-
-### 7. The preflight linter stops looking when it does not recognise the frontend
-
-I rebuilt the UI as a normal TypeScript + Svelte + Tailwind project bundled by Vite.
-Supero does not forbid this — SKILLS §0 says the whole UI layer is yours — but the
-generated `index.html` loads exactly one entry point, and loads it as
-`type="text/babel"`, so the bundle cannot *be* `app.js` without pushing 257KB through
-`@babel/standalone` on every page load. `app.js` is therefore an 88-line loader that
-injects the compiled bundle as a plain classic script beside it.
-
-`build_validate` handled this perfectly: **11 files received, 11 kept.**
-
-`build_doctor` did not. Its UI checks all describe the loader as though it were the
-application:
-
-```
-ui_quality:        { bytes: 3630, components: 0 }
-preloader:         { is_path_b: false, removes_preloader: true }
-multitenant_login: { hand_rolled_login: false, has_tenant_selector: false }
-detail_landing:    { has_landing: false }
-richness:          (the entire block is absent from the response)
-```
-
-The app has a landing page, a tenant selector, a hand-rolled login and ten routed
-screens. None of it is visible to the linter, because every check is a grep for
-hand-written React idioms in a single file.
-
-**The part that matters is not the false negatives — it is that there is no warning.**
-The richness block did not score zero; it vanished. The verdict stayed
-`ready (review warnings)` with the same two warnings I already had. A gate that
-silently no-ops on input it does not understand is worse than one that fails, because
-a genuine regression now passes for exactly the same reason a bundled SPA does.
-
-I would rather it said: *"ui/app.js looks like a loader, not an application; UI checks
-skipped."* One line, and the operator knows the gate did not run.
-
-### 8. `build_deploy_status` reports the generation you asked for, not the one that is live
-
-After publishing v4 I deployed and polled to completion:
-
-```
-status: "running"
-generation_uuid: "a5c6bc04-55bb-4010-a86c-4d046fc38525"   # v4
-```
-
-The container was serving v3. `index.html` still referenced `app.js?v=c6a60c344060`,
-which is v3's hash; v4's is `114c0335bcc1`. The new `bundle.js` and `app.css` both
-404'd. Nothing in the deploy output said so.
-
-`build_smoke_test` with `expected_app_js_sha1` caught it immediately and named the
-remedy, which worked:
-
-```
-DEPLOYED app.js does NOT match your published bundle
-(served sha1 c6a60c344060 != expected 114c0335bcc1)
-```
-
-Credit where it is due: that check exists, its message is excellent, and it is the
-reason I did not ship a stale build. But it is a *post-hoc* check for something the
-deploy pipeline already knew and reported incorrectly. The status endpoint has the
-requested generation and the running revision in hand; it returns the first as if it
-were the second.
-
-**The likely cause is visible in the same response.** `build_deploy_status` returns:
-
-```
-image_uri: "us-central1-docker.pkg.dev/supero-gcp-dev/superoapps/preview-stephen-rhodes-reclaim:latest"
-```
-
-A mutable `:latest` tag, per service, reused across every deploy. A Cloud Run revision
-pinned to a floating tag is exactly how a deploy silently serves the previous image:
-nothing in the revision identifies *which* build it got, so nothing can detect that it
-got the wrong one. `build_teardown` fixed it precisely because deleting the service
-forced a fresh pull.
-
-Two changes would close this for good, and neither is large:
-
-1. **Push and deploy by immutable digest**, or at minimum tag per version
-   (`:v4`, or the bundle checksum `build_publish` already computes and returns). A
-   revision would then name the artifact it is running.
-2. **Return the running revision's artifact hash in `build_deploy_status`**, so
-   `running` means running *this*. The value already exists — `build_smoke_test`
-   derives it by fetching `app.js` over HTTP and hashing it, after the fact.
-
-This is the same problem the job posting describes in your own words — *"which version
-is actually running in that pod" should be a five-second question*. Right now the API
-answers it confidently and wrongly, and the only reliable answer comes from hashing the
-served file yourself.
+- **The workflow definition schema is fully documented.** I reported `workflow_id`,
+  `status` and the per-step `compensate` requirement as undocumented, and framed
+  `build_doctor` rejecting my definitions as the linter disagreeing with SKILLS.
+  `build_get_skills(doc='workflows')` specifies all three. The doctor was right; I
+  built from the §6 summary without fetching the companion doc. The only thing I would
+  still raise is signposting: §6 reads as complete, and a one-line pointer to the
+  authoritative schema would have saved a cycle.
+- **Multi-tenancy is not an inferred flag on MCP.** It is declarative in `config.py`
+  `tenants[]`, auto-derived at go-live. `build_plan`'s `is_multi_tenant` only shapes
+  advice, exactly as documented. My reproduction was real; my conclusion was wrong.
+- **`workflows` import being refused is documented, and `build_doctor` warned me in
+  plain text.** Not a bug. The narrower point that stands: SKILLS tells builders a
+  product-grade app wires "2–3 real workflows + `EVENT_BINDINGS`", while the standard
+  deploy path cannot run them, and those two statements live in different documents.
+  Reclaim gives every workflow-driven action a direct-CRUD fallback so it degrades
+  honestly rather than shipping dead buttons.
 
 ---
 
 ## Notes on scope
 
-Five entities, two roles, one unhappy path, no integrations requiring a secret.
+Five entities, two roles, one unhappy path, no integrations needing a secret.
 
-I went past the 90-minute target. The model, the unhappy path and findings 1-6 were
-done inside it; findings 7 and 8 came out of rebuilding the frontend as a real
-TypeScript/Svelte/Tailwind project afterwards, which was a deliberate choice to see
-whether the platform tolerates a normal toolchain. It does — the runtime is fine with
-it and the linter is not. I deliberately did not add a chart-heavy dashboard,
-AI assistant, or a public catalog — the app is internal, so its logged-out surface is
-a value-prop sign-in rather than a data catalog, which is also what SKILLS §8.4b
-prescribes for this shape of app.
+I went past the 90-minute target. The model, the unhappy path and the first findings
+were inside it. Two things took the rest: rebuilding the frontend as a real
+TypeScript + Svelte + Tailwind project to see whether the platform tolerates a normal
+toolchain — it does, and finding 4 came out of it — and then auditing every claim
+above against all twelve documentation files, which is what produced the three
+retractions.
+
+The audit was worth more than the extra findings. Three of eight were wrong, and I
+would rather you receive five I can defend with a script you can run than eight I
+cannot.
