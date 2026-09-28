@@ -1,0 +1,35 @@
+==========================================================================
+Reclaim — tenant boundary probe
+==========================================================================
+
+[PASS] Cross-tenant read (engineer lists clusters)
+       expected: only nw-* clusters; no Contoso rows
+       actual:   HTTP 200, saw ['nw-edge-2', 'nw-prod-a']
+
+[PASS] Forged X-Tenant header (engineer claims contoso)
+       expected: refused, or still scoped to Northwind
+       actual:   HTTP 200, saw ['nw-edge-2', 'nw-prod-a']
+
+[INFO] Field-level RBAC (wasted_cost_usd)
+       expected: absent for engineer, present for admin
+       actual:   engineer sees field: False (2 rows) | admin sees field: False (2 rows) -- fail-closed, but OVER-APPLIED: hidden_fields declared on the tenant_user rule also strips the field from tenant_admin. The security property holds; the admin loses data they own. Same shape as the lease record filter leaking onto the admin - policy scoping appears to be per-ENTITY, not per-(role, entity).
+
+[PASS] Privilege escalation (engineer resolves drift)
+       expected: rejected (403/404)
+       actual:   HTTP 403 {"error": "Forbidden: Your role does not have update access to drift_finding", "message": "Your role does not have update access to drift_fi
+
+[PASS] Owner scoping (engineer lists leases)
+       expected: only rows owned by the engineer
+       actual:   HTTP 200, 3 rows, foreign owners: none
+
+[PASS] Cross-tenant write (Contoso admin edits a Northwind cluster)
+       expected: rejected (403/404)
+       actual:   HTTP 403 {"error": "Forbidden", "message": "Access denied: this reclaim:cluster belongs to another tenant"}
+
+[PASS] Engineer writes environment state directly
+       expected: rejected — engineers are read-only on environments
+       actual:   HTTP 403 {"error": "Forbidden: Your role does not have update access to environment", "message": "Your role does not have update access to environmen
+
+==========================================================================
+6 held, 0 breached, 1 fail-closed-but-over-applied
+==========================================================================
