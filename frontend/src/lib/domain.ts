@@ -41,7 +41,10 @@ export interface Environment extends SuperoRecord {
   current_holder?: string;
   current_team?: string;
   monthly_cost_usd?: number;
+  /* The platform returns `cluster_refs`; the schema declares the reference as
+   * `Cluster`. Both spellings are typed because both appear in the wild. */
   Cluster_refs?: Array<{ uuid?: string; to_uuid?: string }>;
+  cluster_refs?: Array<{ uuid?: string; to_uuid?: string }>;
 }
 
 export interface Lease extends SuperoRecord {

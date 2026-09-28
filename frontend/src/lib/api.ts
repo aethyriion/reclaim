@@ -40,11 +40,17 @@ export function byUuid<T extends SuperoRecord>(items: T[], uuid: string): T | nu
   return items.find((i) => i.uuid === uuid) ?? null;
 }
 
-/** Resolve an environment's cluster via its reference array, falling back to the
- * name prefix the seed encodes. */
+/** Resolve an environment's cluster via its reference array.
+ *
+ * The platform returns the array as `cluster_refs` (lower snake_case of the
+ * reference name), NOT `Cluster_refs` as the schema declares it. Check both:
+ * relying on one casing silently falls through to the name-prefix fallback,
+ * which only works while the seed happens to prefix environments with their
+ * cluster name. */
 export function envCluster(env: Environment | null, clusters: Cluster[]): Cluster | null {
   if (!env) return null;
-  const ref = env.Cluster_refs?.[0];
+  const refs = env.Cluster_refs ?? env.cluster_refs;
+  const ref = refs?.[0];
   const refUuid = ref?.uuid ?? ref?.to_uuid;
   if (refUuid) {
     const hit = byUuid(clusters, refUuid);

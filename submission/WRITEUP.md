@@ -331,10 +331,31 @@ deploy pipeline already knew and reported incorrectly. The status endpoint has t
 requested generation and the running revision in hand; it returns the first as if it
 were the second.
 
+**The likely cause is visible in the same response.** `build_deploy_status` returns:
+
+```
+image_uri: "us-central1-docker.pkg.dev/supero-gcp-dev/superoapps/preview-stephen-rhodes-reclaim:latest"
+```
+
+A mutable `:latest` tag, per service, reused across every deploy. A Cloud Run revision
+pinned to a floating tag is exactly how a deploy silently serves the previous image:
+nothing in the revision identifies *which* build it got, so nothing can detect that it
+got the wrong one. `build_teardown` fixed it precisely because deleting the service
+forced a fresh pull.
+
+Two changes would close this for good, and neither is large:
+
+1. **Push and deploy by immutable digest**, or at minimum tag per version
+   (`:v4`, or the bundle checksum `build_publish` already computes and returns). A
+   revision would then name the artifact it is running.
+2. **Return the running revision's artifact hash in `build_deploy_status`**, so
+   `running` means running *this*. The value already exists — `build_smoke_test`
+   derives it by fetching `app.js` over HTTP and hashing it, after the fact.
+
 This is the same problem the job posting describes in your own words — *"which version
-is actually running in that pod" should be a five-second question* — and right now the
-answer the API gives is confidently wrong. I would surface the running revision's
-artifact hash directly in `build_deploy_status`, so `running` means running *this*.
+is actually running in that pod" should be a five-second question*. Right now the API
+answers it confidently and wrongly, and the only reliable answer comes from hashing the
+served file yourself.
 
 ---
 
