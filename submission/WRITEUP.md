@@ -269,12 +269,84 @@ still decides. The app works either way. But an app that followed SKILLS' advice
 buttons and a stale fleet view, and nothing in the deploy output says so loudly
 enough.
 
+### 7. The preflight linter stops looking when it does not recognise the frontend
+
+I rebuilt the UI as a normal TypeScript + Svelte + Tailwind project bundled by Vite.
+Supero does not forbid this — SKILLS §0 says the whole UI layer is yours — but the
+generated `index.html` loads exactly one entry point, and loads it as
+`type="text/babel"`, so the bundle cannot *be* `app.js` without pushing 257KB through
+`@babel/standalone` on every page load. `app.js` is therefore an 88-line loader that
+injects the compiled bundle as a plain classic script beside it.
+
+`build_validate` handled this perfectly: **11 files received, 11 kept.**
+
+`build_doctor` did not. Its UI checks all describe the loader as though it were the
+application:
+
+```
+ui_quality:        { bytes: 3630, components: 0 }
+preloader:         { is_path_b: false, removes_preloader: true }
+multitenant_login: { hand_rolled_login: false, has_tenant_selector: false }
+detail_landing:    { has_landing: false }
+richness:          (the entire block is absent from the response)
+```
+
+The app has a landing page, a tenant selector, a hand-rolled login and ten routed
+screens. None of it is visible to the linter, because every check is a grep for
+hand-written React idioms in a single file.
+
+**The part that matters is not the false negatives — it is that there is no warning.**
+The richness block did not score zero; it vanished. The verdict stayed
+`ready (review warnings)` with the same two warnings I already had. A gate that
+silently no-ops on input it does not understand is worse than one that fails, because
+a genuine regression now passes for exactly the same reason a bundled SPA does.
+
+I would rather it said: *"ui/app.js looks like a loader, not an application; UI checks
+skipped."* One line, and the operator knows the gate did not run.
+
+### 8. `build_deploy_status` reports the generation you asked for, not the one that is live
+
+After publishing v4 I deployed and polled to completion:
+
+```
+status: "running"
+generation_uuid: "a5c6bc04-55bb-4010-a86c-4d046fc38525"   # v4
+```
+
+The container was serving v3. `index.html` still referenced `app.js?v=c6a60c344060`,
+which is v3's hash; v4's is `114c0335bcc1`. The new `bundle.js` and `app.css` both
+404'd. Nothing in the deploy output said so.
+
+`build_smoke_test` with `expected_app_js_sha1` caught it immediately and named the
+remedy, which worked:
+
+```
+DEPLOYED app.js does NOT match your published bundle
+(served sha1 c6a60c344060 != expected 114c0335bcc1)
+```
+
+Credit where it is due: that check exists, its message is excellent, and it is the
+reason I did not ship a stale build. But it is a *post-hoc* check for something the
+deploy pipeline already knew and reported incorrectly. The status endpoint has the
+requested generation and the running revision in hand; it returns the first as if it
+were the second.
+
+This is the same problem the job posting describes in your own words — *"which version
+is actually running in that pod" should be a five-second question* — and right now the
+answer the API gives is confidently wrong. I would surface the running revision's
+artifact hash directly in `build_deploy_status`, so `running` means running *this*.
+
 ---
 
 ## Notes on scope
 
-Time-boxed per your instruction. Five entities, two roles, one unhappy path, no
-integrations requiring a secret. I deliberately did not add a chart-heavy dashboard,
+Five entities, two roles, one unhappy path, no integrations requiring a secret.
+
+I went past the 90-minute target. The model, the unhappy path and findings 1-6 were
+done inside it; findings 7 and 8 came out of rebuilding the frontend as a real
+TypeScript/Svelte/Tailwind project afterwards, which was a deliberate choice to see
+whether the platform tolerates a normal toolchain. It does — the runtime is fine with
+it and the linter is not. I deliberately did not add a chart-heavy dashboard,
 AI assistant, or a public catalog — the app is internal, so its logged-out surface is
 a value-prop sign-in rather than a data catalog, which is also what SKILLS §8.4b
 prescribes for this shape of app.
