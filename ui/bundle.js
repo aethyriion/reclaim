@@ -4571,8 +4571,7 @@ var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "acce
   }
   function envCluster(env, clusters) {
     if (!env) return null;
-    const refs = env.Cluster_refs ?? env.cluster_refs;
-    const ref = refs?.[0];
+    const ref = env.Cluster_refs?.[0];
     const refUuid = ref?.uuid ?? ref?.to_uuid;
     if (refUuid) {
       const hit = byUuid(clusters, refUuid);
