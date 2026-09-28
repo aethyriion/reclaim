@@ -1,0 +1,50 @@
+/* Tailwind v4, utilities + theme only.
+ *
+ * Preflight is deliberately NOT imported: the generated index.html already loads
+ * the Tailwind Play CDN, which injects its own preflight. Importing a second one
+ * would mean two competing resets on the same page. */
+@import "tailwindcss/theme.css";
+@import "tailwindcss/utilities.css";
+
+@theme {
+  --color-rc-bg: #0B0E14;
+  --color-rc-panel: #111725;
+  --color-rc-panel2: #0E1420;
+  --color-rc-line: #1E2939;
+  --color-rc-text: #E6EDF7;
+  --color-rc-muted: #8A9BB4;
+  --color-rc-dim: #5C6B82;
+  --color-rc-accent: #38BDF8;
+  --color-rc-ok: #34D399;
+  --color-rc-warn: #F59E0B;
+  --color-rc-danger: #F43F5E;
+  --color-rc-violet: #A78BFA;
+  --font-rc-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+#reclaim-root {
+  position: fixed;
+  inset: 0;
+  min-height: 100vh;
+  overflow: auto;
+  z-index: 2147483647;
+  background: var(--color-rc-bg);
+  color: var(--color-rc-text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+#reclaim-root *, #reclaim-root *::before, #reclaim-root *::after { box-sizing: border-box; }
+#reclaim-root a { color: inherit; }
+#reclaim-root tbody tr:hover { background: rgb(56 189 248 / 0.04); }
+#reclaim-root ::placeholder { color: var(--color-rc-dim); }
+
+@keyframes rc-fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+#reclaim-root main { animation: rc-fade .18s ease both; }
+
+@media (max-width: 640px) {
+  #reclaim-root main, #reclaim-root header { padding-left: 16px !important; padding-right: 16px !important; }
+  #reclaim-root table { font-size: 12px; }
+  #reclaim-root .rc-hide-sm { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #reclaim-root * { animation: none !important; transition: none !important; }
+}
